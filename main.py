@@ -57,21 +57,26 @@ def get_rainfall_data(location):
     rainfall_data = df_location['Rainfall'].values
     return rainfall_data
 
-# Helper function to get the next 3 months
+# Helper function to get the current and next 3 months
 def get_next_months():
     current_month = datetime.now().month
     months = []
-    
+
+    # Add the current month
+    month_name = calendar.month_name[current_month]
+    months.append(month_name)
+
+    # Get the next 3 months
     for i in range(1, 4):  # For the next 3 months
         next_month = (current_month + i - 1) % 12 + 1  # Month index (wrap around after December)
         month_name = calendar.month_name[next_month]
         months.append(month_name)
-    
+
     return months
 
-# API to get 3-month rainfall predictions using ARIMA
-@app.post("/predict_3month_rain/")
-def predict_rainfall_3months(input: WeatherInput):
+# API to get current and 3-month rainfall predictions using ARIMA
+@app.post("/predict_rain/")
+def predict_rainfall(input: WeatherInput):
     # Fetch historical rainfall data from GitHub
     rainfall_data = get_rainfall_data(input.location)
 
@@ -81,8 +86,8 @@ def predict_rainfall_3months(input: WeatherInput):
 
     # Make predictions using the pre-trained ARIMA model
     try:
-        # Predict the next 3 months based on the last available data points
-        forecast = arima_model.forecast(steps=3)  # No `exog` parameter
+        # Predict the next 4 months based on the last available data points (includes the current month)
+        forecast = arima_model.forecast(steps=4)  # 4 steps, current month + next 3 months
     except Exception as e:
         return {"error": f"ARIMA model prediction failed: {str(e)}"}
 
@@ -94,12 +99,12 @@ def predict_rainfall_3months(input: WeatherInput):
     storm_occurrence_pred = storm_occurrence_tree.predict(features_scaled)
     storm_severity_pred = storm_severity_tree.predict(features_scaled)
 
-    # Get the next 3 months
+    # Get the current and next 3 months
     months = get_next_months()
 
     # Return predictions with months
     return {
-        "rainfall_predictions_next_3_months": dict(zip(months, forecast.tolist())),  # Pair months with predictions
+        "rainfall_predictions_next_4_months": dict(zip(months, forecast.tolist())),  # Pair months with predictions
         "storm_occurrence": int(storm_occurrence_pred[0]),
         "storm_severity": int(storm_severity_pred[0])
     }
