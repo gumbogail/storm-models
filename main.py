@@ -108,3 +108,27 @@ def predict_rainfall(input: WeatherInput):
         "storm_occurrence": int(storm_occurrence_pred[0]),
         "storm_severity": int(storm_severity_pred[0])
     }
+#  API to predict the current day's rainfall and storm conditions
+@app.post("/predict_today/")
+def predict_today(input: WeatherInput):
+    # Fetch weather data for the location
+    features = get_weather_data(input.location)
+    features_scaled = scaler.transform(features)
+
+    # Predict storm occurrence and severity for today
+    storm_occurrence_pred = storm_occurrence_tree.predict(features_scaled)
+    storm_severity_pred = storm_severity_tree.predict(features_scaled)
+
+    # Predict rainfall for today using the ARIMA model
+    try:
+        # ARIMA model is used to predict rainfall for the current day
+        forecast = arima_model.forecast(steps=1)  # Only predicting for the current day
+    except Exception as e:
+        return {"error": f"ARIMA model prediction failed: {str(e)}"}
+
+    # Return predictions
+    return {
+        "rainfall_today": forecast[0],  # Rainfall prediction for today
+        "storm_occurrence_today": int(storm_occurrence_pred[0]),
+        "storm_severity_today": int(storm_severity_pred[0])
+    }
