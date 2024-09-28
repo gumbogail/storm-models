@@ -5,6 +5,7 @@ import requests
 import numpy as np
 from datetime import datetime
 import calendar
+import pandas as pd
 
 app = FastAPI()
 
