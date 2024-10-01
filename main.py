@@ -1,107 +1,138 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import joblib
 import requests
-import numpy as np
-from datetime import datetime
-import calendar
 import pandas as pd
+import numpy as np
+import joblib
+from statsmodels.tsa.arima.model import ARIMA
+import logging
 
 app = FastAPI()
 
-# Load models and scaler
-arima_model = joblib.load('rainfall_modelseries.pkl')  # Pre-trained ARIMA model
-storm_occurrence_tree = joblib.load('storm_occurrence_model.pkl')
-storm_severity_tree = joblib.load('storm_severity_model.pkl')
-scaler = joblib.load('scaler.pkl')
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 
-# Define input model
-class CoordinatesInput(BaseModel):
+# Load pre-trained models
+storm_occurrence_model = joblib.load("storm_occurrence_model.pkl")
+storm_severity_model = joblib.load("storm_severity_model.pkl")
+rainfall_model = joblib.load("rainfall_modelseries.pkl")
+
+# API Key and endpoint for WeatherAPI
+WEATHER_API_KEY = "3a0d4c4e3e304fdd92e190019243007"
+WEATHER_API_URL = "http://api.weatherapi.com/v1/current.json"
+
+# Define the input data structure
+class Location(BaseModel):
     latitude: float
     longitude: float
 
-# Helper function to fetch weather data from WeatherAPI
-def get_weather_data(latitude, longitude):
-    api_key = "3a0d4c4e3e304fdd92e190019243007"
-    location = f"{latitude},{longitude}"
-    url = f"http://api.weatherapi.com/v1/current.json?key={api_key}&q={location}"
-    response = requests.get(url)
-    data = response.json()
+# Helper function to get weather data
+def get_weather_data(lat, lon):
+    try:
+        logging.info(f"Fetching weather data for lat: {lat}, lon: {lon}")
+        url = f"{WEATHER_API_URL}?key={WEATHER_API_KEY}&q={lat},{lon}"
+        response = requests.get(url)
+        response.raise_for_status()
+        weather_data = response.json()["current"]
+        
+        # Map the fetched weather data to the features used during training
+        return {
+            'Temp_High (°C)': weather_data["temp_c"],
+            'Temp_Low (°C)': weather_data["temp_c"],  # Assuming same for simplicity
+            'Humidity (%)': weather_data["humidity"],
+            'Atmospheric_Pressure (hPa)': weather_data["pressure_mb"],
+            'Wind_Speed (km/h)': weather_data["wind_kph"],
+            'Cloud_Cover (%)': weather_data["cloud"],
+            'Visibility (km)': weather_data["vis_km"]
+        }
+    except Exception as e:
+        logging.error(f"Error fetching weather data: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Error fetching weather data: {str(e)}")
 
-    # Extract the necessary features from the WeatherAPI response
-    temp_high = data['current']['temp_c']
-    temp_low = temp_high - np.random.randint(5, 10)  # Dummy value for low temp
-    humidity = data['current']['humidity']
-    pressure = data['current']['pressure_mb']
-    wind_speed = data['current']['wind_kph']
-    cloud_cover = data['current']['cloud']
-    visibility = data['current']['vis_km']
+# Helper function to get rainfall data from GitHub
+def get_rainfall_data():
+    try:
+        # Assume the file is a CSV on GitHub
+        rainfall_data = pd.read_csv("https://raw.githubusercontent.com/gumbogail/FarmersGuide-Datasets/e00bae31ac7c48f63541a3c9c038c917e1f37f9e/rainfalldataset.csv")
+        # Keep only the relevant columns, assuming 'rainfall' is the correct column name
+        return rainfall_data[['Rainfall']]
+    except Exception as e:
+        logging.error(f"Error fetching rainfall data: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Error fetching rainfall data: {str(e)}")
 
-    # Prepare the feature array for prediction
-    features = np.array([[temp_high, temp_low, humidity, pressure, wind_speed, cloud_cover, visibility]])
-    return features
+# Route for predicting rainfall and storm occurrence/severity
+@app.post("/predict/")
+def predict_storm_and_rainfall(location: Location):
+    # Get weather features for prediction
+    weather_features = get_weather_data(location.latitude, location.longitude)
 
-# Helper function to fetch historical rainfall data
-def get_rainfall_data(latitude, longitude):
-    github_rainfall_url = "https://github.com/gumbogail/FarmersGuide-Datasets/blob/e00bae31ac7c48f63541a3c9c038c917e1f37f9e/rainfalldataset.csv"
-    df = pd.read_csv(github_rainfall_url, on_bad_lines='skip')
+    # Prepare features for storm occurrence model
+    features = np.array([[
+        weather_features["Temp_High (°C)"],
+        weather_features["Temp_Low (°C)"],
+        weather_features["Humidity (%)"],
+        weather_features["Atmospheric_Pressure (hPa)"],
+        weather_features["Wind_Speed (km/h)"],
+        weather_features["Cloud_Cover (%)"],
+        weather_features["Visibility (km)"]
+    ]])
 
-    df_location = df[(df['Latitude'] == latitude) & (df['Longitude'] == longitude)]
-    rainfall_data = df_location['Rainfall'].values
-    return rainfall_data
+    # Predict storm occurrence and severity
+    storm_occurrence = storm_occurrence_model.predict(features)[0]
+    storm_severity = storm_severity_model.predict(features)[0] if storm_occurrence == 1 else None
 
-# API to predict current and next 3-month rainfall using ARIMA
-@app.post("/predict_rain/")
-def predict_rainfall(input: CoordinatesInput):
-    latitude = input.latitude
-    longitude = input.longitude
+    # Load rainfall data for ARIMA model
+    rainfall_data = get_rainfall_data()
+    rainfall_values = rainfall_data['Rainfall'].values
 
-    # Fetch historical rainfall data
-    rainfall_data = get_rainfall_data(latitude, longitude)
-    if len(rainfall_data) == 0:
-        return {"error": "No historical data available for the given location."}
-
-    # Predict the next 4 months using the ARIMA model
-    forecast = arima_model.forecast(steps=4)
-
-    # Fetch weather data and predict storm occurrence and severity
-    features = get_weather_data(latitude, longitude)
-    features_scaled = scaler.transform(features)
-    storm_occurrence_pred = storm_occurrence_tree.predict(features_scaled)
-    storm_severity_pred = storm_severity_tree.predict(features_scaled)
-
-    # Get the current and next 3 months
-    months = get_next_months()
-
-    return {
-        "rainfall_predictions_next_4_months": dict(zip(months, forecast.tolist())),
-        "storm_occurrence": int(storm_occurrence_pred[0]),
-        "storm_severity": int(storm_severity_pred[0])
-    }
-
-# API to predict today's storm and rainfall
-@app.post("/predict_today/")
-def predict_today(input: CoordinatesInput):
-    latitude = input.latitude
-    longitude = input.longitude
-
-    # Fetch weather data and predict storm occurrence and severity
-    features = get_weather_data(latitude, longitude)
-    features_scaled = scaler.transform(features)
-    storm_occurrence_pred = storm_occurrence_tree.predict(features_scaled)
-    storm_severity_pred = storm_severity_tree.predict(features_scaled)
-
-    # Predict rainfall for today
-    forecast = arima_model.forecast(steps=1)
+    # Fit ARIMA model to predict the next 3 months
+    arima_model = ARIMA(rainfall_values, order=(5, 1, 0))  # ARIMA parameters are placeholders
+    arima_fit = arima_model.fit()
+    rainfall_forecast = arima_fit.forecast(steps=3)
 
     return {
-        "rainfall_today": forecast[0],
-        "storm_occurrence_today": int(storm_occurrence_pred[0]),
-        "storm_severity_today": int(storm_severity_pred[0])
+        "storm_occurrence": int(storm_occurrence),
+        "storm_severity": float(storm_severity) if storm_occurrence == 1 else "No Storm",
+        "rainfall_forecast": list(rainfall_forecast)
     }
 
-# Helper function to get the current and next 3 months
-def get_next_months():
-    current_month = datetime.now().month
-    months = [calendar.month_name[(current_month + i - 1) % 12 + 1] for i in range(4)]
-    return months
+@app.post("/predict/daily/")
+def predict_daily_storm(location: Location):
+    # Get weather features for prediction
+    weather_features = get_weather_data(location.latitude, location.longitude)
+
+    # Prepare features for storm occurrence model
+    features = np.array([[
+        weather_features["Temp_High (°C)"],
+        weather_features["Temp_Low (°C)"],
+        weather_features["Humidity (%)"],
+        weather_features["Atmospheric_Pressure (hPa)"],
+        weather_features["Wind_Speed (km/h)"],
+        weather_features["Cloud_Cover (%)"],
+        weather_features["Visibility (km)"]
+    ]])
+
+    # Predict daily storm occurrence and severity
+    storm_occurrence = storm_occurrence_model.predict(features)[0]
+    storm_severity = storm_severity_model.predict(features)[0] if storm_occurrence == 1 else None
+
+     # Load rainfall data for ARIMA model
+    rainfall_data = get_rainfall_data()
+    rainfall_values = rainfall_data['Rainfall'].values
+
+    # Fit ARIMA model to predict the next day's rainfall
+    arima_model = ARIMA(rainfall_values, order=(5, 1, 0))  # ARIMA parameters are placeholders
+    arima_fit = arima_model.fit()
+    rainfall_forecast = arima_fit.forecast(steps=1)
+    
+
+    return {
+        "daily_storm_occurrence": int(storm_occurrence),
+        "daily_storm_severity": float(storm_severity) if storm_occurrence == 1 else "No Storm",
+        "rainfall_forecast": list(rainfall_forecast)
+    }
+
+# Run the app
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
