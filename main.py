@@ -6,8 +6,13 @@ import numpy as np
 import joblib
 from statsmodels.tsa.arima.model import ARIMA
 import logging
+from fastapi.middleware.gzip import GZipMiddleware
+
+
 
 app = FastAPI()
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
