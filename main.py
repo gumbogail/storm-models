@@ -66,7 +66,7 @@ def get_rainfall_data():
         raise HTTPException(status_code=400, detail=f"Error fetching rainfall data: {str(e)}")
 
 # Route for predicting rainfall and storm occurrence/severity
-@app.post("/predict/")
+@app.get("/predict/")
 def predict_storm_and_rainfall(location: Location):
     # Get weather features for prediction
     weather_features = get_weather_data(location.latitude, location.longitude)
@@ -101,7 +101,7 @@ def predict_storm_and_rainfall(location: Location):
         "rainfall_forecast": list(rainfall_forecast)
     }
 
-@app.post("/predict/daily/")
+@app.get("/predict/daily/")
 def predict_daily_storm(location: Location):
     # Get weather features for prediction
     weather_features = get_weather_data(location.latitude, location.longitude)
