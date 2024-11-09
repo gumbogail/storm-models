@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 import requests
 import pandas as pd
@@ -67,9 +67,9 @@ def get_rainfall_data():
 
 # Route for predicting rainfall and storm occurrence/severity
 @app.get("/predict/")
-def predict_storm_and_rainfall(location: Location):
-    # Get weather features for prediction
-    weather_features = get_weather_data(location.latitude, location.longitude)
+def predict_storm_and_rainfall(latitude: float = Query(...), longitude: float = Query(...)):
+    # Use latitude and longitude to fetch weather data and make predictions
+    weather_features = get_weather_data(latitude, longitude)
 
     # Prepare features for storm occurrence model
     features = np.array([[
