@@ -11,6 +11,15 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 
 app = FastAPI()
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Adjust with specific origins if possible
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
@@ -23,7 +32,7 @@ storm_severity_model = joblib.load("storm_severity_model.pkl")
 rainfall_model = joblib.load("rainfall_modelseries.pkl")
 
 # API Key and endpoint for WeatherAPI
-WEATHER_API_KEY = "3a0d4c4e3e304fdd92e190019243007"
+WEATHER_API_KEY = "44c35b150e054b908d461545241111"
 WEATHER_API_URL = "http://api.weatherapi.com/v1/current.json"
 
 # Define the input data structure
